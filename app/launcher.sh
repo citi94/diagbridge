@@ -50,8 +50,6 @@ print -ru2 -- "$APP_NAME launch $(date '+%Y-%m-%d %H:%M:%S') build=$(cat "$RES/b
 OPTION_HELD=$(osascript -l JavaScript -e \
     'ObjC.import("Cocoa"); ($.NSEvent.modifierFlags & $.NSEventModifierFlagOption) ? 1 : 0' 2>/dev/null || echo 0)
 
-dialog() { osascript -e "display dialog \"$1\" buttons {\"OK\"} default button 1 with title \"$APP_NAME\"" >/dev/null; }
-
 fail() { osascript -e "display dialog \"$1\" buttons {\"Quit\"} default button 1 with icon stop with title \"$APP_NAME\"" >/dev/null; exit 1; }
 
 notify() { osascript -e "display notification \"$1\" with title \"$APP_NAME\"" 2>/dev/null || true; }
@@ -117,8 +115,16 @@ reinstall() {
     for f in "$VCDS_DIR"/*.CFG(N) "$VCDS_DIR"/*.ini(N) "$VCDS_DIR"/*.bin(N); do
         cp -p "$f" "$tmp/"
     done
-    rm -rf "$VCDS_DIR"
-    mv "$tmp" "$VCDS_DIR"
+    # Atomic-ish swap: the old install is moved aside, not deleted, until the
+    # new one is in place -- a failure at any point leaves a usable state.
+    rm -rf "$VCDS_DIR.old"
+    mv "$VCDS_DIR" "$VCDS_DIR.old"
+    if mv "$tmp" "$VCDS_DIR"; then
+        rm -rf "$VCDS_DIR.old"
+    else
+        mv "$VCDS_DIR.old" "$VCDS_DIR"
+        fail "Update failed -- your existing VCDS install is untouched."
+    fi
     notify "VCDS updated."
 }
 
@@ -151,20 +157,29 @@ map_output_dirs() {
         local target="$mac_root"
         [[ "$d" != "Logs" ]] && target="$mac_root/$d"
         [[ -L "$VCDS_DIR/$d" ]] && continue
-        mkdir -p "$target"
+        # macOS TCC can deny us ~/Documents -- then just leave VCDS's own
+        # dirs in place (everything still works, files are only less visible).
+        mkdir -p "$target" 2>/dev/null || { print -ru2 -- "map_output_dirs: no access to $target, skipping"; continue; }
         if [[ -d "$VCDS_DIR/$d" ]]; then
-            cp -a "$VCDS_DIR/$d/." "$target/" 2>/dev/null || true
-            rm -rf "$VCDS_DIR/$d"
+            # Copy first, delete ONLY if the copy succeeded -- a partial copy
+            # (disk full, permission) must never cost the user their scans.
+            if cp -a "$VCDS_DIR/$d/." "$target/" 2>/dev/null; then
+                rm -rf "$VCDS_DIR/$d"
+            else
+                print -ru2 -- "map_output_dirs: copy of $d failed, keeping prefix dir"
+                continue
+            fi
         fi
         ln -s "$target" "$VCDS_DIR/$d"
     done
 }
 
-# Single instance: if VCDS is already running FROM THIS BUNDLE, bring it to
-# the front rather than letting a second copy bounce and bail. The pattern is
-# anchored to our loader's absolute path so unrelated processes that merely
-# mention the exe name (scripts, editors) can never block a launch.
-if pgrep -qf "^$WINELOADER_BIN VCDS-ARM\.exe"; then
+# Single instance: if a session from THIS BUNDLE is already live, bring it to
+# the front rather than tearing it down (end_session would SIGKILL a VCDS
+# session that may be mid-conversation with a car). Detected the same robust
+# way end_session sweeps: by processes mapping our ntdll.so -- wine rewrites
+# argv, so pgrep on the command line is NOT reliable.
+if [[ -n "$(lsof -t "$RES/wine/lib/wine/aarch64-unix/ntdll.so" 2>/dev/null)" ]]; then
     osascript -e 'tell application "System Events" to set frontmost of (first process whose name contains "VCDS") to true' 2>/dev/null || true
     exit 0
 fi

@@ -19,7 +19,7 @@ notarized.
 
 ## Requirements
 
-- Apple Silicon Mac (M1 or later), macOS 14+
+- Apple Silicon Mac (M1 or later) running **macOS 26 or later**
 - A genuine VCDS installer from Ross-Tech, **version 25.x or later**
   (the first release with ARM64 binaries)
 - Your Ross-Tech interface (USB or WiFi)
@@ -62,5 +62,7 @@ tree into this .app — see the comments in `make-app.sh`.
 
 - The packaging scripts in this repository: [MIT](LICENSE)
 - Wine: LGPL 2.1 or later — [complete corresponding source](https://github.com/citi94/wine-macos-arm64)
-- Bundled: 7-Zip extraction code (LGPL), FreeType, GnuTLS — licence texts
-  ship inside the app under `Contents/Resources/licenses/`
+- Bundled: 7-Zip (LGPL), FreeType, GnuTLS and friends, libusb — full licence
+  texts and a component manifest ship inside the app under
+  `Contents/Resources/licenses/`, and the exact source tarballs for the
+  LGPL libraries are attached to every release

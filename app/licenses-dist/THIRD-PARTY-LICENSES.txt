@@ -1,0 +1,29 @@
+Third-party components in this application, their licences, and source.
+
+Wine 11.10 (modified)
+  LGPL-2.1-or-later — see Wine-LICENSE.txt, LGPL-2.1.txt
+  Complete corresponding source (including all modifications):
+  https://github.com/citi94/wine-macos-arm64  (branch macos-arm64-port)
+
+7-Zip 26.02 (7zz, used to extract the user's installer)
+  LGPL-2.1-or-later with unRAR restriction — see 7-Zip-License.txt
+
+FreeType 2.14.3          FTL (with credit clause) — FreeType-LICENSE.txt
+  Portions of this software are copyright © The FreeType Project
+  (www.freetype.org). All rights reserved.
+GnuTLS 3.8.11           LGPL-2.1-or-later — LGPL-2.1.txt
+GMP 6.3.0                LGPL-3.0-or-later — LGPL-3.0.txt
+Nettle/Hogweed 3.10.2      LGPL-3.0-or-later — LGPL-3.0.txt
+libidn2 2.3.8            LGPL-3.0-or-later — LGPL-3.0.txt, libidn2-Unicode-COPYING.txt
+libtasn1 4.21.0           LGPL-2.1-or-later — LGPL-2.1.txt
+libunistring 1.4.2       LGPL-3.0-or-later — LGPL-3.0.txt
+libintl (gettext 1.0)  LGPL-2.1-or-later — LGPL-2.1.txt
+p11-kit 0.26.2            BSD-3-Clause — p11-kit-COPYING.txt
+libpng 1.6.58             libpng/zlib licence — libpng-LICENSE.txt
+libusb 1.0.29           LGPL-2.1-or-later — LGPL-2.1.txt
+
+Source code for the LGPL libraries above: the exact upstream source
+tarballs are attached to every release at
+  https://github.com/citi94/diagbridge/releases
+This application contains NO Ross-Tech software. VCDS is a product of
+Ross-Tech LLC and must be obtained from them by the user.

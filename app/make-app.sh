@@ -50,7 +50,7 @@ if [[ -d "$BUILD_X86" ]]; then
     if [[ -f "$KEEP_LIST" ]]; then
         for d in x86_64-windows i386-windows; do
             find "$C/Resources/wine/lib/wine/$d" -type f | while read -r f; do
-                grep -qxi "$(basename "$f")" "$KEEP_LIST" || rm "$f"
+                grep -qixF "$(basename "$f")" "$KEEP_LIST" || rm "$f"
             done
             echo "    $d pruned to $(ls "$C/Resources/wine/lib/wine/$d" | wc -l | tr -d ' ') files"
         done
@@ -136,13 +136,19 @@ if [[ -x /opt/homebrew/bin/7zz ]]; then cp /opt/homebrew/bin/7zz "$C/Resources/e
 else cp /opt/homebrew/bin/7z "$C/Resources/extractor/7zz"; fi
 cp "$HERE/prefix-seed.reg" "$C/Resources/seed/prefix.reg"
 cp "$HERE/AppIcon.icns" "$C/Resources/AppIcon.icns"
-cp "$ARM_PORT/wine-src/LICENSE" "$C/Resources/licenses/WINE-LGPL.txt" 2>/dev/null || true
+# Full third-party licence texts + component manifest (licenses-dist/ is
+# assembled from the exact kegs/sources the bundle is built against --
+# regenerate it if any bundled component version changes).
+cp "$HERE/licenses-dist/"* "$C/Resources/licenses/"
 cat > "$C/Resources/licenses/SOURCE-OFFER.txt" <<TXT
 This application contains Wine, modified for native ARM64 macOS.
 Wine is free software under the GNU LGPL 2.1 or later.
 Complete corresponding source of the modified Wine:
   https://github.com/citi94/wine-macos-arm64  (branch macos-arm64-port)
-7-Zip extraction code (LGPL), FreeType, and GnuTLS licenses accompany this file.
+For every other open-source component (7-Zip, FreeType, GnuTLS and its
+dependencies, libusb), see THIRD-PARTY-LICENSES.txt in this folder; the
+exact source tarballs are attached to each release at
+  https://github.com/citi94/diagbridge/releases
 This application contains NO Ross-Tech software. VCDS is a product of
 Ross-Tech LLC and must be obtained from them by the user.
 TXT
@@ -161,7 +167,7 @@ cat > "$C/Info.plist" <<PLIST
     <key>CFBundleExecutable</key><string>$APP_NAME-setup</string>
     <key>CFBundleIconFile</key><string>AppIcon</string>
     <key>CFBundlePackageType</key><string>APPL</string>
-    <key>LSMinimumSystemVersion</key><string>14.0</string>
+    <key>LSMinimumSystemVersion</key><string>26.0</string>
     <key>LSArchitecturePriority</key><array><string>arm64</string></array>
     <key>NSHighResolutionCapable</key><true/>
     <key>NSHumanReadableCopyright</key><string>Wine is © the Wine project (LGPL). This app ships no Ross-Tech software.</string>
@@ -238,6 +244,8 @@ EOF
     fi
     hdiutil convert "$DMG_RW" -format ULMO -o "$DMG" -quiet
     rm -rf "$DMG_STAGE" "$DMG_RW"
+    # Sign the DMG itself (Gatekeeper assesses the container too).
+    [[ "$IDENTITY" != "-" ]] && codesign --force --timestamp --sign "$IDENTITY" "$DMG"
     echo "    $(du -sh "$DMG" | awk '{print $1}')  $DMG"
 fi
 

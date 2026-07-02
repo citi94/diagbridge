@@ -4,7 +4,7 @@ expanded to a static import closure over the bundle trees."""
 import glob, os, re, subprocess, sys
 
 SCRATCH = sys.argv[1] if len(sys.argv) > 1 else os.path.dirname(os.path.abspath(__file__))  # dir with loaddll-*.log captures
-APP = "/Users/peter/projects/vcds_mac/arm-port/dist/DiagBridge.app"
+APP = sys.argv[2] if len(sys.argv) > 2 else os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "dist", "DiagBridge.app"))  # bundle to scan
 TREES = {
     "i386-windows": os.path.join(APP, "Contents/Resources/wine/lib/wine/i386-windows"),
     "x86_64-windows": os.path.join(APP, "Contents/Resources/wine/lib/wine/x86_64-windows"),
