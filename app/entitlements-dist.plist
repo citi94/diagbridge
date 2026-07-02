@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Wine maps Windows PE code pages that are not Mach-O signed -->
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+    <!-- MAP_JIT W^X code pages (arm64 PE mapping; Rosetta translation) -->
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+    <!-- Wine unix-side .so libraries are loaded across team boundaries -->
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+    <!-- v0.1: DYLD_FALLBACK_LIBRARY_PATH points dlopen'd freetype/gnutls at
+         Resources/libs. Drop once SONAMEs are rebuilt @executable_path-relative. -->
+    <key>com.apple.security.cs.allow-dyld-environment-variables</key>
+    <true/>
+</dict>
+</plist>

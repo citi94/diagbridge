@@ -1,0 +1,27 @@
+Windows Registry Editor Version 5.00
+
+; Seeds applied to a fresh prefix at first run. Each entry here was earned
+; the hard way -- see PACKAGING.md "Required prefix seeds".
+
+; Driver services start slowly on this port (W^X fault storms at process
+; startup); the default 10s SCM pipe timeout causes random 1053 failures.
+[HKEY_LOCAL_MACHINE\System\CurrentControlSet\Control]
+"ServicesPipeTimeout"="60000"
+
+; NOTE: do NOT seed winebus/winehid service entries here. wineboot registers
+; them natively in fresh prefixes, and a .reg hex(2) ImagePath gets
+; double-encoded on ANSI import (broke USB on the first real install,
+; 2026-06-12). Seeding services is only for hand-rolled dev prefixes -- use
+; `wine reg add` there instead.
+
+; Mac-native key feel: Cmd-C/Cmd-V act as Ctrl-C/Ctrl-V. Option becomes Alt
+; (required companion or winemac warns and ignores the Command mapping).
+[HKEY_CURRENT_USER\Software\Wine\Mac Driver]
+"LeftCommandIsCtrl"="Y"
+"LeftOptionIsAlt"="Y"
+
+; No desktop integration outside the app's own container: winemenubuilder
+; would otherwise write app stubs/associations into ~/Applications and
+; LaunchServices if VCDS ever creates shortcuts.
+[HKEY_CURRENT_USER\Software\Wine\DllOverrides]
+"winemenubuilder.exe"=""
