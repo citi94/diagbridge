@@ -183,7 +183,23 @@ map_output_dirs() {
     for d in Logs Scans Debug; do
         local target="$mac_root"
         [[ "$d" != "Logs" ]] && target="$mac_root/$d"
-        [[ -L "$VCDS_DIR/$d" ]] && continue
+        # Per-machine override: the first line of $SUPPORT/dir-<Name> (e.g.
+        # dir-Scans) redirects that folder anywhere -- say, a long-standing
+        # archive. Lives outside the prefix, so it survives app updates and
+        # VCDS reinstalls, unlike a hand-edited symlink.
+        if [[ -s "$SUPPORT/dir-$d" ]]; then
+            local override=""
+            IFS= read -r override < "$SUPPORT/dir-$d" || true
+            override="${override/#\~\//$HOME/}"
+            [[ -n "$override" ]] && target="$override"
+        fi
+        if [[ -L "$VCDS_DIR/$d" ]]; then
+            # Re-point when the override (or default) has changed; the files
+            # themselves stay where they are -- moving archives is a human
+            # decision, not a launcher's.
+            [[ "$(readlink "$VCDS_DIR/$d")" == "$target" ]] && continue
+            rm -f "$VCDS_DIR/$d"
+        fi
         # macOS TCC can deny us ~/Documents -- then just leave VCDS's own
         # dirs in place (everything still works, files are only less visible).
         mkdir -p "$target" 2>/dev/null || { print -ru2 -- "map_output_dirs: no access to $target, skipping"; continue; }
