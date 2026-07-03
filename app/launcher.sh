@@ -50,6 +50,17 @@ print -ru2 -- "$APP_NAME launch $(date '+%Y-%m-%d %H:%M:%S') build=$(cat "$RES/b
 OPTION_HELD=$(osascript -l JavaScript -e \
     'ObjC.import("Cocoa"); ($.NSEvent.modifierFlags & $.NSEventModifierFlagOption) ? 1 : 0' 2>/dev/null || echo 0)
 
+# One launcher at a time: a second copy started during setup/boot must not
+# mistake the first one's half-built session for a stale one and sweep it.
+LOCKFILE="$SUPPORT/launcher.pid"
+if [[ -f "$LOCKFILE" ]] && kill -0 "$(cat "$LOCKFILE" 2>/dev/null)" 2>/dev/null; then
+    print -ru2 -- "another launcher (pid $(cat "$LOCKFILE")) is alive -- deferring to it"
+    osascript -e 'tell application "System Events" to set frontmost of (first process whose name contains "VCDS") to true' 2>/dev/null || true
+    exit 0
+fi
+print -r -- $$ >"$LOCKFILE"
+trap 'rm -f "$LOCKFILE"' EXIT
+
 fail() { osascript -e "display dialog \"$1\" buttons {\"Quit\"} default button 1 with icon stop with title \"$APP_NAME\"" >/dev/null; exit 1; }
 
 notify() { osascript -e "display notification \"$1\" with title \"$APP_NAME\"" 2>/dev/null || true; }
@@ -174,14 +185,21 @@ map_output_dirs() {
     done
 }
 
-# Single instance: if a session from THIS BUNDLE is already live, bring it to
-# the front rather than tearing it down (end_session would SIGKILL a VCDS
-# session that may be mid-conversation with a car). Detected the same robust
-# way end_session sweeps: by processes mapping our ntdll.so -- wine rewrites
-# argv, so pgrep on the command line is NOT reliable.
-if [[ -n "$(lsof -t "$RES/wine/lib/wine/aarch64-unix/ntdll.so" 2>/dev/null)" ]]; then
-    osascript -e 'tell application "System Events" to set frontmost of (first process whose name contains "VCDS") to true' 2>/dev/null || true
-    exit 0
+# Single instance vs stale session. Processes mapping our ntdll.so are this
+# bundle's session (wine rewrites argv, so pgrep on the command line is NOT
+# reliable). Two cases:
+#  - VCDS itself is among them: it's genuinely running -- bring it to the
+#    front and leave it alone (it may be mid-conversation with a car);
+#  - session remnants but NO VCDS process (aftermath of a crash or force-
+#    quit): sweep and boot normally. Without this a wedged session made the
+#    app "open" to nothing until cleaned up by hand.
+session_pids=$(lsof -t "$RES/wine/lib/wine/aarch64-unix/ntdll.so" 2>/dev/null) || true
+if [[ -n "${session_pids:-}" ]]; then
+    if ps -o command= -p ${=session_pids} 2>/dev/null | grep -q "VCDS-ARM\.exe"; then
+        osascript -e 'tell application "System Events" to set frontmost of (first process whose name contains "VCDS") to true' 2>/dev/null || true
+        exit 0
+    fi
+    print -ru2 -- "stale session with no VCDS process -- sweeping"
 fi
 
 # Fresh session on every open. A wineserver left over from an older build of
@@ -217,11 +235,26 @@ fi
 
 map_output_dirs
 
-cd "$VCDS_DIR"   # VCDS requires cwd = its dir (CODES.DAT)
-rc=0
-"$WINELOADER_BIN" VCDS-ARM.exe || rc=$?
+# Run VCDS. The chain from app to interface to car can glitch (interference,
+# dropped packets), and VCDS may hang or crash then -- it does on bare-metal
+# Windows too. Make recovery one click: an abnormal exit (crash, or the user
+# force-quitting a hung VCDS) tears the session down and offers to reopen.
+# Crashes are recognised by the loader's "Unhandled ..." marker in this
+# session's log, counted per run so an old crash never flags a clean exit.
+crash_count() { local n; n=$(grep -c "Unhandled" "$LOGS/session.log" 2>/dev/null) || true; print -r -- "${n:-0}"; }
+while :; do
+    cd "$VCDS_DIR"   # VCDS requires cwd = its dir (CODES.DAT)
+    marks_before=$(crash_count)
+    rc=0
+    "$WINELOADER_BIN" VCDS-ARM.exe || rc=$?
 
-# Full teardown on close: without this, winedevice/services keep the session
-# alive indefinitely (nothing may outlive the app).
-end_session
-exit $rc
+    # Full teardown on close: without this, winedevice/services keep the
+    # session alive indefinitely (nothing may outlive the app).
+    end_session
+
+    (( rc != 0 )) || [[ "$(crash_count)" != "$marks_before" ]] || break
+    print -ru2 -- "abnormal VCDS exit rc=$rc -- offering reopen"
+    ans=$(osascript -e "display dialog \"VCDS quit unexpectedly.\n\nThis can happen after an interface or communication glitch -- your logs and settings are safe.\" buttons {\"Close\", \"Reopen\"} default button \"Reopen\" cancel button \"Close\" with title \"$APP_NAME\" giving up after 60" 2>/dev/null) || break
+    [[ "$ans" == *"button returned:Reopen"* ]] || break
+done
+exit 0
