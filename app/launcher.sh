@@ -153,6 +153,15 @@ first_run() {
 
     osascript -e "display dialog \"Setting up — this one-time step takes a few minutes.\n\nYou'll get a notification at each stage, and VCDS will open when it's ready.\" buttons {\"OK\"} default button 1 with title \"$APP_NAME\" giving up after 15" >/dev/null 2>&1 || true
 
+    # Send one throwaway multicast datagram NOW so macOS raises its Local
+    # Network permission prompt during setup, attributed to this app. The
+    # grant only applies to processes started after the user accepts -- if
+    # VCDS itself triggers the prompt, its network side stays dead until the
+    # app is relaunched (seen 2026-07-03 on a fresh account). Asking while
+    # the environment is still being prepared means VCDS starts with the
+    # permission already effective.
+    print -n x | nc -u -w 1 224.0.0.251 5353 2>/dev/null || true
+
     notify "Preparing the Windows environment (1 of 3)…"
     mkdir -p "$WINEPREFIX"
     "$WINELOADER_BIN" wineboot --init 2>/dev/null || fail "Could not initialise the Windows environment."

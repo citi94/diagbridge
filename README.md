@@ -47,6 +47,11 @@ are preserved.
 
 ## Troubleshooting
 
+**No WiFi interface / no update check on first run?** When macOS asks to
+allow DiagBridge to access the local network and you accept, the permission
+only applies to freshly started processes — quit DiagBridge and open it
+again, and the network side comes to life. (USB is unaffected.)
+
 Session logs live in
 `~/Library/Application Support/DiagBridge/logs/` — attach `session.log`
 when [opening an issue](https://github.com/citi94/diagbridge/issues).
