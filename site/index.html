@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DiagBridge — VCDS on Apple Silicon Macs, natively</title>
+<meta name="description" content="Run the current VCDS natively on Apple Silicon Macs — no VM, no Windows licence. Free, open-source, signed and notarized. Bring your own Ross-Tech licence and HEX-NET or HEX-V2 interface.">
+<meta property="og:title" content="DiagBridge — VCDS on Apple Silicon, no VM">
+<meta property="og:description" content="The current VCDS running natively on M-series Macs. Free and open source; ships no Ross-Tech software — bring your own licence.">
+<meta property="og:type" content="website">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🚗</text></svg>">
+<style>
+  :root {
+    --bg: #ffffff; --fg: #1a1d21; --muted: #5b6470; --line: #e5e8ec;
+    --accent: #0a66c2; --accent-fg: #ffffff; --card: #f6f8fa; --warn-bg: #fff8e6; --warn-line: #e6cf8a;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1216; --fg: #e8eaed; --muted: #9aa4b0; --line: #262c33;
+      --accent: #4c9aff; --accent-fg: #0b1017; --card: #171c22; --warn-bg: #241f0f; --warn-line: #5c4d1e;
+    }
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body {
+    background: var(--bg); color: var(--fg);
+    font: 17px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  main { max-width: 880px; margin: 0 auto; padding: 0 24px 80px; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  header { padding: 88px 0 56px; text-align: center; }
+  .brand { font-size: 15px; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+  h1 { font-size: clamp(34px, 6vw, 52px); line-height: 1.12; letter-spacing: -0.02em; margin: 14px 0 18px; }
+  .sub { font-size: clamp(18px, 2.6vw, 21px); color: var(--muted); max-width: 620px; margin: 0 auto 34px; }
+  .cta { display: inline-block; background: var(--accent); color: var(--accent-fg); font-weight: 650;
+         padding: 15px 34px; border-radius: 12px; font-size: 18px; }
+  .cta:hover { text-decoration: none; filter: brightness(1.08); }
+  .cta-meta { margin-top: 14px; font-size: 14px; color: var(--muted); }
+
+  section { margin-top: 64px; }
+  h2 { font-size: 26px; letter-spacing: -0.01em; margin-bottom: 22px; }
+  .steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; counter-reset: step; }
+  .step { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 22px; }
+  .step::before { counter-increment: step; content: counter(step);
+    display: inline-flex; width: 30px; height: 30px; align-items: center; justify-content: center;
+    background: var(--accent); color: var(--accent-fg); border-radius: 50%; font-weight: 700; margin-bottom: 12px; }
+  .step strong { display: block; margin-bottom: 6px; }
+  .step, .feat { font-size: 15.5px; color: var(--muted); }
+  .step strong, .feat strong { color: var(--fg); }
+
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; }
+  .feat { border: 1px solid var(--line); border-radius: 14px; padding: 18px 20px; }
+
+  .req { background: var(--warn-bg); border: 1px solid var(--warn-line); border-radius: 14px; padding: 24px 26px; }
+  .req ul { margin: 10px 0 0 20px; }
+  .req li { margin: 6px 0; }
+
+  details { border-bottom: 1px solid var(--line); padding: 14px 0; }
+  details summary { cursor: pointer; font-weight: 600; list-style: none; }
+  details summary::after { content: "+"; float: right; color: var(--muted); }
+  details[open] summary::after { content: "–"; }
+  details p { margin-top: 10px; color: var(--muted); font-size: 15.5px; }
+
+  footer { margin-top: 80px; padding-top: 28px; border-top: 1px solid var(--line);
+           font-size: 13.5px; color: var(--muted); }
+  footer p { margin: 6px 0; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <div class="brand">DiagBridge</div>
+    <h1>VCDS on your Mac.<br>Natively. No&nbsp;VM.</h1>
+    <p class="sub">The current VCDS, running natively on Apple&nbsp;Silicon — built on a
+    first-of-its-kind ARM64 port of Wine. Opens in about a second. Free and open&nbsp;source.</p>
+    <a class="cta" id="dl" href="https://github.com/citi94/diagbridge/releases/latest">Download for Mac</a>
+    <p class="cta-meta" id="dlmeta">Signed &amp; notarized DMG · macOS 26+ · Apple Silicon</p>
+  </header>
+
+  <section>
+    <h2>Three steps to a scan</h2>
+    <div class="steps">
+      <div class="step"><strong>Install</strong>Download the DMG, drag DiagBridge to Applications. It's a normal, notarized Mac app.</div>
+      <div class="step"><strong>Add your VCDS</strong>On first launch, point it at the installer you downloaded from Ross-Tech. Your copy, your licence — DiagBridge ships no Ross-Tech software.</div>
+      <div class="step"><strong>Plug in and scan</strong>Connect your HEX-NET or HEX-V2 by USB or WiFi and scan the car. Logs land in <code>~/Documents/VCDS&nbsp;Logs</code>.</div>
+    </div>
+  </section>
+
+  <section>
+    <h2>What you get</h2>
+    <div class="grid">
+      <div class="feat"><strong>Genuinely native.</strong> Ross-Tech's own ARM64 build of VCDS on a native ARM64 Wine — no emulation for the app, no Rosetta dependency, ~1&nbsp;second cold start.</div>
+      <div class="feat"><strong>USB and WiFi.</strong> Interface auto-discovery works out of the box for HEX-NET; HEX-V2 over USB.</div>
+      <div class="feat"><strong>Everything tested on real cars.</strong> Auto-Scan, fault codes, measuring blocks, long coding, output tests.</div>
+      <div class="feat"><strong>Stays current.</strong> VCDS's built-in updater works; or hold Option at launch to update from a new Ross-Tech installer. Settings and serial carry over.</div>
+      <div class="feat"><strong>Behaves like a Mac app.</strong> Signed, notarized, 140&nbsp;MB download, logs in Documents, crash recovery built in.</div>
+      <div class="feat"><strong>Open source.</strong> The <a href="https://github.com/citi94/wine-macos-arm64">Wine port</a> is LGPL; the <a href="https://github.com/citi94/diagbridge">packaging</a> is MIT. Free — no catch.</div>
+    </div>
+  </section>
+
+  <section>
+    <div class="req">
+      <h2>Requirements — read before downloading</h2>
+      <ul>
+        <li><strong>Apple Silicon</strong> Mac (M1 or later) running <strong>macOS 26</strong> or newer</li>
+        <li>Your own <strong>genuine VCDS licence and installer</strong> (25.x or later) from <a href="https://www.ross-tech.com">ross-tech.com</a></li>
+        <li>A current interface: <strong>HEX-NET</strong> (USB + WiFi) or <strong>HEX-V2</strong> (USB)</li>
+        <li>Older FTDI-based interfaces (HEX-USB+CAN, KII-USB, Micro-CAN, serial cables) are <strong>not supported</strong></li>
+      </ul>
+    </div>
+  </section>
+
+  <section>
+    <h2>Questions</h2>
+    <details>
+      <summary>Is this affiliated with Ross-Tech?</summary>
+      <p>No. DiagBridge is an independent, open-source project and is not affiliated with or endorsed by
+      Ross-Tech LLC. It ships none of their software — it runs the copy you licensed from them.
+      If something misbehaves under DiagBridge, please report it <a href="https://github.com/citi94/diagbridge/issues">on GitHub</a>,
+      not to Ross-Tech support.</p>
+    </details>
+    <details>
+      <summary>How does it work?</summary>
+      <p>Wine translates Windows system calls to macOS ones — but until now, Wine on the Mac only ran
+      Intel Windows programs through Apple's Rosetta emulation. DiagBridge is built on a new port of Wine
+      that runs natively on ARM64 macOS, hosting Ross-Tech's ARM64 build of VCDS directly. VCDS's
+      Intel-only helper tools run through a hybrid Rosetta&nbsp;2 slice. The complete Wine source is
+      <a href="https://github.com/citi94/wine-macos-arm64">published under the LGPL</a>.</p>
+    </details>
+    <details>
+      <summary>Why is it free?</summary>
+      <p>Because it started as scratching my own itch and turned into a genuinely new piece of engineering
+      worth sharing. If it saves you a Windows VM, star the repo and report what car and interface you
+      tested with.</p>
+    </details>
+    <details>
+      <summary>WiFi can't find my interface on the very first run?</summary>
+      <p>When macOS asks permission for DiagBridge to access the local network, accept — then quit the app
+      and open it again. macOS only applies that permission to freshly started apps. One-time thing.</p>
+    </details>
+  </section>
+
+  <footer>
+    <p>© 2026 Peter Harding · <a href="https://github.com/citi94/diagbridge">GitHub</a> ·
+       <a href="https://github.com/citi94/diagbridge/issues">Support</a> ·
+       <a href="https://github.com/citi94/wine-macos-arm64">Wine source (LGPL)</a></p>
+    <p>DiagBridge is not affiliated with or endorsed by Ross-Tech LLC. VCDS, HEX-NET and HEX-V2 are
+       trademarks of Ross-Tech LLC, referenced only to describe compatibility.</p>
+  </footer>
+</main>
+<script>
+  fetch("https://api.github.com/repos/citi94/diagbridge/releases/latest")
+    .then(r => r.json())
+    .then(rel => {
+      const dmg = (rel.assets || []).find(a => a.name.endsWith(".dmg"));
+      if (dmg) {
+        document.getElementById("dl").href = dmg.browser_download_url;
+        document.getElementById("dlmeta").textContent =
+          "DiagBridge " + rel.tag_name.replace(/^v/, "") +
+          " · Signed & notarized DMG · macOS 26+ · Apple Silicon";
+      }
+    }).catch(() => {});
+</script>
+</body>
+</html>
