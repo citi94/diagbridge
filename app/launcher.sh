@@ -190,8 +190,15 @@ fi
 # nothing worth that risk.
 end_session
 
-# No install yet = first run; Option held at launch = update/reinstall.
-if [[ ! -f "$VCDS_DIR/VCDS-ARM.exe" ]]; then
+# No install (or a BROKEN one) = first run; Option held = update/reinstall.
+# The exe alone is not proof of an install: a directory with VCDS-ARM.exe
+# but no Codes.dat boots to a zombie "VAG-COM" screen with everything
+# disabled (seen 2026-07-03 on an account with debris from old experiments).
+if [[ ! -f "$VCDS_DIR/VCDS-ARM.exe" || ! -f "$VCDS_DIR/Codes.dat" ]]; then
+    if [[ -f "$VCDS_DIR/VCDS-ARM.exe" ]]; then
+        osascript -e "display dialog \"The VCDS installation is incomplete and needs to be set up again from your Ross-Tech installer.\" buttons {\"Continue\"} default button 1 with title \"$APP_NAME\" giving up after 20" >/dev/null 2>&1 || true
+        rm -rf "$VCDS_DIR"
+    fi
     first_run
 elif [[ "$OPTION_HELD" == "1" ]]; then
     reinstall
