@@ -23,7 +23,14 @@ export DYLD_FALLBACK_LIBRARY_PATH="$RES/libs"
 export WINESERVER="$RES/wine/bin/wineserver"
 export WINELOADER="$CONTENTS/MacOS/$APP_NAME"   # children show the app name, not "wine"
 # err class stays on so field crash logs are diagnosable; fixme spam off.
-export WINEDEBUG="${WINEDEBUG:-err+all,fixme-all,warn-all,trace-all}"
+# A debug-seh flag file (touch "$SUPPORT/debug-seh") additionally traces
+# exception dispatch — the tool for hunting intermittent faults in the field
+# without launching from a terminal. Verbose; delete the file when done.
+if [[ -f "$SUPPORT/debug-seh" ]]; then
+    export WINEDEBUG="${WINEDEBUG:-err+all,fixme-all,warn-all,trace-all,trace+seh}"
+else
+    export WINEDEBUG="${WINEDEBUG:-err+all,fixme-all,warn-all,trace-all}"
+fi
 WINELOADER_BIN="$CONTENTS/MacOS/$APP_NAME"
 
 # Hybrid x86: advertise x86 support so i386 helpers (VCIConfig, VCDSScan,
