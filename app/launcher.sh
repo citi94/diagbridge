@@ -72,6 +72,27 @@ fail() { osascript -e "display dialog \"$1\" buttons {\"Quit\"} default button 1
 
 notify() { osascript -e "display notification \"$1\" with title \"$APP_NAME\"" 2>/dev/null || true; }
 
+# Every process belonging to a DiagBridge wine session -- from ANY build of
+# the app, not only this bundle. wine rewrites argv to Windows names, so we
+# enumerate PE processes (".exe" in argv) and keep those with a file mapped
+# inside some "$APP_NAME.app" wine tree. That signal is bundle- and location-
+# independent (a dev/dist copy, an old build), needs no live wineserver (the
+# mmaps outlive it), and works where env vars can't -- macOS won't let us read
+# another process's WINEPREFIX. All DiagBridge bundles share one prefix (keyed
+# by app name), so "a DiagBridge wine process" == "a process on our prefix".
+# This is what reaps strays a per-bundle match cannot see -- e.g. an orphaned
+# services.exe left pegging a core for days after its wineserver died (seen
+# 2026-07-08: three dev-build sessions, one in a segv storm for six days).
+prefix_session_pids() {
+    local p pids=()
+    for p in $(ps -Ao pid=,command= 2>/dev/null | awk '/\.exe/{print $1}'); do
+        [[ "$p" == "$$" ]] && continue
+        lsof -p "$p" 2>/dev/null | grep -qF "$APP_NAME.app/Contents/Resources/wine/" \
+            && pids+=$p
+    done
+    print -r -- ${pids}
+}
+
 # Shut down this prefix's wine session completely (bounded). wineserver -k
 # asks the server to kill its clients, but on this port some clients survive
 # that (blocked in a server-socket read), so after the server is gone we
@@ -95,6 +116,15 @@ end_session() {
         kill -9 ${=leftovers} 2>/dev/null || true
         sleep 1
         "$WINESERVER" -k9 2>/dev/null || true
+    fi
+    # Cross-bundle safety net: reap any DiagBridge wine process the per-bundle
+    # sweep above cannot see -- a stray from a different build sharing this
+    # prefix, possibly with a long-dead wineserver of its own.
+    local stray
+    stray=$(prefix_session_pids)
+    if [[ -n "${stray:-}" ]]; then
+        print -ru2 -- "end_session: reaping cross-bundle stray pids: ${=stray}"
+        kill -9 ${=stray} 2>/dev/null || true
     fi
 }
 
@@ -122,10 +152,17 @@ EOF
 # (*.CFG / *.ini / *.bin -- serial, options, workshop code) carry over; the
 # Logs/Scans/Debug symlinks are re-created by map_output_dirs afterwards.
 reinstall() {
-    local installer tmp f
+    local installer
     osascript -e "display dialog \"Update VCDS from a new Ross-Tech installer?\n\nYour settings and activation are kept.\" buttons {\"Cancel\", \"Choose Installer…\"} default button 2 with title \"$APP_NAME\"" >/dev/null 2>&1 || return 0
     installer=$(choose_installer) || return 0   # user cancelled
     installer="${installer%$'\n'}"
+    apply_update "$installer"
+}
+
+# Unpack a Ross-Tech installer over the current install. Used by the
+# Option-launch flow above and by the in-app updater hand-off below.
+apply_update() {
+    local installer="$1" tmp f
     tmp="$SUPPORT/vcds-update-tmp"
     rm -rf "$tmp"
     notify "Unpacking the new VCDS version…"
@@ -217,15 +254,16 @@ map_output_dirs() {
     done
 }
 
-# Single instance vs stale session. Processes mapping our ntdll.so are this
-# bundle's session (wine rewrites argv, so pgrep on the command line is NOT
-# reliable). Two cases:
+# Single instance vs stale session. prefix_session_pids finds every DiagBridge
+# wine process on this prefix, across builds (wine rewrites argv, so pgrep on
+# the command line is NOT reliable). Two cases:
 #  - VCDS itself is among them: it's genuinely running -- bring it to the
 #    front and leave it alone (it may be mid-conversation with a car);
 #  - session remnants but NO VCDS process (aftermath of a crash or force-
-#    quit): sweep and boot normally. Without this a wedged session made the
-#    app "open" to nothing until cleaned up by hand.
-session_pids=$(lsof -t "$RES/wine/lib/wine/aarch64-unix/ntdll.so" 2>/dev/null) || true
+#    quit, or a stray from another build): sweep and boot normally. Without
+#    this a wedged session made the app "open" to nothing until cleaned up by
+#    hand -- and an orphaned service could peg a core unseen.
+session_pids=$(prefix_session_pids)
 if [[ -n "${session_pids:-}" ]]; then
     if ps -o command= -p ${=session_pids} 2>/dev/null | grep -q "VCDS-ARM\.exe"; then
         osascript -e 'tell application "System Events" to set frontmost of (first process whose name contains "VCDS") to true' 2>/dev/null || true
@@ -280,9 +318,46 @@ while :; do
     rc=0
     "$WINELOADER_BIN" VCDS-ARM.exe || rc=$?
 
+    # Self-update hand-off: VCDS downloads Ross-Tech's installer to
+    # vcupg.exe in its own dir, launches it and quits. Tearing the session
+    # down at that moment kills the installer mid-run and the update never
+    # lands (seen 2026-08-27: 26.7.2 downloaded, VCDS stayed on 26.5.2).
+    # Give it a moment to appear, wait for it to finish, then reopen VCDS.
+    # Detected two ways: the installer process is alive, or a vcupg.exe newer
+    # than this launch sits in the VCDS dir -- either means "this exit was an
+    # update hand-off". The installer itself must NOT be allowed to do the
+    # job: it is an i386 NSIS stub that, run under Wine, believes it is on
+    # x64 Windows and installs the x86-64 build into C:\Ross-Tech\VCDS-Beta
+    # (verified 2026-08-27) -- no VCDS-ARM.exe, wrong directory. So we stop
+    # it and unpack the archive natively, exactly like first run does.
+    updated=0
+    for i in {1..15}; do pgrep -qf 'vcupg\.exe' && break; sleep 0.2; done
+    if pgrep -qf 'vcupg\.exe' || [[ -f "$VCDS_DIR/vcupg.exe" && "$VCDS_DIR/vcupg.exe" -nt "$LOCKFILE" ]]; then
+        print -ru2 -- "VCDS updater hand-off detected -- unpacking vcupg.exe natively"
+        pkill -f 'vcupg\.exe' 2>/dev/null || true
+        for i in {1..25}; do pgrep -qf 'vcupg\.exe' || break; sleep 0.2; done
+        notify "Installing the VCDS update…"
+        # Keep a copy outside the install dir: apply_update moves that aside.
+        cp -f "$VCDS_DIR/vcupg.exe" "$SUPPORT/vcupg-pending.exe"
+        rm -f "$VCDS_DIR/vcupg.exe"
+        end_session
+        if apply_update "$SUPPORT/vcupg-pending.exe"; then
+            rm -f "$SUPPORT/vcupg-pending.exe"
+            # Whatever the stray installer managed to write before we stopped it.
+            stray_beta="$WINEPREFIX/drive_c/Ross-Tech/VCDS-Beta"
+            [[ -d "$stray_beta" && "$stray_beta" -nt "$LOCKFILE" ]] && rm -rf "$stray_beta"
+            map_output_dirs
+            updated=1
+        fi
+    fi
+
     # Full teardown on close: without this, winedevice/services keep the
     # session alive indefinitely (nothing may outlive the app).
     end_session
+    if (( updated )); then
+        notify "VCDS updated -- reopening."
+        continue
+    fi
 
     (( rc != 0 )) || [[ "$(crash_count)" != "$marks_before" ]] || break
     print -ru2 -- "abnormal VCDS exit rc=$rc -- offering reopen"

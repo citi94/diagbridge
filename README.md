@@ -43,11 +43,26 @@ Your scan logs land in `~/Documents/VCDS Logs` like a proper Mac app.
 
 ## Updating VCDS
 
-Download the newer Ross-Tech installer, then hold **Option** while opening
-DiagBridge — it offers to update in place. Your settings, serial and logs
-are preserved.
+VCDS's own updater works: **Options → User Interface → Check for updates
+now** (or accept the prompt at startup). VCDS downloads the new version and
+quits; DiagBridge unpacks it — the Windows installer is never run — and
+reopens VCDS on the new version. Your settings, serial and logs are
+preserved.
+
+Alternatively, download the newer Ross-Tech installer yourself and hold
+**Option** while opening DiagBridge — it offers to update in place from
+that file.
 
 ## Troubleshooting
+
+**WiFi HEX-NET "Interface: Not Found!" although the interface is on and
+answers other software?** VCDS **Beta 26.5.2.1** has this bug (the
+interface is discovered and even talks to VCDS, which then reports it not
+found). Release 26.3 and Beta 26.7.2 are fine — update VCDS.
+
+**"VCDS was unable to reach the update server (error code: -4)"?** This
+comes and goes on Ross-Tech's side (the same happens on Windows); try again
+a little later.
 
 **No WiFi interface / no update check on first run?** When macOS asks to
 allow DiagBridge to access the local network and you accept, the permission
