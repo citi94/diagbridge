@@ -58,7 +58,9 @@ that file.
 **WiFi HEX-NET "Interface: Not Found!" although the interface is on and
 answers other software?** VCDS **Beta 26.5.2.1** has this bug (the
 interface is discovered and even talks to VCDS, which then reports it not
-found). Release 26.3 and Beta 26.7.2 are fine — update VCDS.
+found). Release 26.3 is fine — use the Release channel. (Beta 26.7.2 finds
+the interface but hung connecting to a car in our testing; stay on
+Releases unless Ross-Tech asks you to test a beta.)
 
 **"VCDS was unable to reach the update server (error code: -4)"?** This
 comes and goes on Ross-Tech's side (the same happens on Windows); try again
