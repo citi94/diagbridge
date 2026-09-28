@@ -40,18 +40,6 @@ if [[ -x "$RES/wine/lib/wine/x86_64-unix/wine" && ! -f "$SUPPORT/disable-x86" ]]
     export WINEHYBRIDX86=1
 fi
 
-# Session logs: rotate the last 5 (crash backtraces from winedbg land here,
-# so one bad launch must not be wiped by the next).
-LOGS="$SUPPORT/logs"
-mkdir -p "$LOGS"
-rm -f "$SUPPORT/last-session.log"           # pre-v0.2 single log
-for i in 4 3 2 1; do
-    [[ -f "$LOGS/session.$i.log" ]] && mv -f "$LOGS/session.$i.log" "$LOGS/session.$((i+1)).log"
-done
-[[ -f "$LOGS/session.log" ]] && mv -f "$LOGS/session.log" "$LOGS/session.1.log"
-exec 2>"$LOGS/session.log"
-print -ru2 -- "$APP_NAME launch $(date '+%Y-%m-%d %H:%M:%S') build=$(cat "$RES/build-id" 2>/dev/null || echo '?')"
-
 # Sample the Option key NOW, before the slow parts, so a quick press-and-hold
 # at launch is reliably seen. Option-at-launch = reinstall/update VCDS.
 OPTION_HELD=$(osascript -l JavaScript -e \
@@ -59,14 +47,32 @@ OPTION_HELD=$(osascript -l JavaScript -e \
 
 # One launcher at a time: a second copy started during setup/boot must not
 # mistake the first one's half-built session for a stale one and sweep it.
+# Checked BEFORE log rotation: a second launch rotating the logs renamed the
+# running session's log out from under it (its crash check then read the
+# wrong file, and repeat launches pushed the real log off the end). The pid
+# must also still be a launcher: a lock left by a force-quit survives a
+# reboot, and a recycled pid made the app silently refuse to open.
+LOGS="$SUPPORT/logs"
+mkdir -p "$LOGS"
 LOCKFILE="$SUPPORT/launcher.pid"
-if [[ -f "$LOCKFILE" ]] && kill -0 "$(cat "$LOCKFILE" 2>/dev/null)" 2>/dev/null; then
-    print -ru2 -- "another launcher (pid $(cat "$LOCKFILE")) is alive -- deferring to it"
+lock_pid=$(cat "$LOCKFILE" 2>/dev/null || true)
+if [[ -n "$lock_pid" ]] && ps -o command= -p "$lock_pid" 2>/dev/null | grep -qF -- "${0:t}"; then
+    print -r -- "another launcher (pid $lock_pid) is alive -- deferring to it" >>"$LOGS/session.log"
     osascript -e 'tell application "System Events" to set frontmost of (first process whose name contains "VCDS") to true' 2>/dev/null || true
     exit 0
 fi
 print -r -- $$ >"$LOCKFILE"
 trap 'rm -f "$LOCKFILE"' EXIT
+
+# Session logs: rotate the last 5 (crash backtraces from winedbg land here,
+# so one bad launch must not be wiped by the next).
+rm -f "$SUPPORT/last-session.log"           # pre-v0.2 single log
+for i in 4 3 2 1; do
+    [[ -f "$LOGS/session.$i.log" ]] && mv -f "$LOGS/session.$i.log" "$LOGS/session.$((i+1)).log"
+done
+[[ -f "$LOGS/session.log" ]] && mv -f "$LOGS/session.log" "$LOGS/session.1.log"
+exec 2>"$LOGS/session.log"
+print -ru2 -- "$APP_NAME launch $(date '+%Y-%m-%d %H:%M:%S') build=$(cat "$RES/build-id" 2>/dev/null || echo '?')"
 
 fail() { osascript -e "display dialog \"$1\" buttons {\"Quit\"} default button 1 with icon stop with title \"$APP_NAME\"" >/dev/null; exit 1; }
 
@@ -140,6 +146,15 @@ extract_installer() {
     rm -rf "$target/\$PLUGINSDIR" "$target/\$TEMP"
 }
 
+# A whole, intact Ross-Tech installer with an ARM build inside -- checked
+# before anything is torn down. `7zz t` decompresses every entry, so a
+# truncated download fails here rather than half-way through an update.
+installer_complete() {
+    [[ -s "$1" ]] || return 1
+    "$RES/extractor/7zz" t "$1" >/dev/null 2>&1 || return 1
+    "$RES/extractor/7zz" l -slt "$1" 2>/dev/null | grep -qx 'Path = VCDS-ARM.exe'
+}
+
 choose_installer() {
     osascript <<'EOF' 2>/dev/null
 POSIX path of (choose file with prompt "Select your downloaded VCDS installer (VCDS-Release-….exe).\n\nYou can download it from Ross-Tech's website. It is only read, never run." of type {"com.microsoft.windows-executable", "public.data"})
@@ -148,9 +163,9 @@ EOF
 
 # Option-at-launch: update (or repair) VCDS from a newer Ross-Tech installer.
 # The new tree is unpacked to the side and only swapped in once it verifies,
-# so a bad download can't damage the current install. The user's settings
-# (*.CFG / *.ini / *.bin -- serial, options, workshop code) carry over; the
-# Logs/Scans/Debug symlinks are re-created by map_output_dirs afterwards.
+# so a bad download can't damage the current install. See apply_update for
+# what carries over; the Logs/Scans/Debug symlinks are re-created by
+# map_output_dirs afterwards.
 reinstall() {
     local installer
     osascript -e "display dialog \"Update VCDS from a new Ross-Tech installer?\n\nYour settings and activation are kept.\" buttons {\"Cancel\", \"Choose Installer…\"} default button 2 with title \"$APP_NAME\"" >/dev/null 2>&1 || return 0
@@ -161,26 +176,64 @@ reinstall() {
 
 # Unpack a Ross-Tech installer over the current install. Used by the
 # Option-launch flow above and by the in-app updater hand-off below.
+#
+# What carries over from the old install:
+#  - every file the new installer does NOT ship -- that is, whatever VCDS or
+#    the user created: VCDS.CFG, Scaling/VCPrefs.cfg, adaptation histories,
+#    and Logs/Scans/Debug when they are real dirs rather than symlinks
+#    (map_output_dirs can fail; the old *.CFG/*.ini/*.bin rule then deleted
+#    them with the old tree). Executables and DLLs are left behind, so code
+#    Ross-Tech dropped doesn't linger.
+#  - top-level *.cfg / *.ini even where the installer ships a default
+#    (LCode.ini, vcdsscan.ini are rewritten with the user's preferences).
+# Everything else the installer ships wins -- notably the interface firmware
+# images (HN121.bin etc.), which the old rule silently reverted to the
+# previous version on every update.
+#
+# Runs as an `if` condition, where set -e is off, so every step is checked
+# by hand. The previous install is kept as VCDS.previous (one generation)
+# rather than deleted.
 apply_update() {
-    local installer="$1" tmp f
+    local installer="$1" tmp f rel
+    setopt localoptions extendedglob
     tmp="$SUPPORT/vcds-update-tmp"
     rm -rf "$tmp"
     notify "Unpacking the new VCDS version…"
     extract_installer "$installer" "$tmp"
-    for f in "$VCDS_DIR"/*.CFG(N) "$VCDS_DIR"/*.ini(N) "$VCDS_DIR"/*.bin(N); do
-        cp -p "$f" "$tmp/"
+    while IFS= read -r -d '' rel; do
+        rel="${rel#./}"
+        [[ "$rel" == (#i)*.(exe|dll) ]] && continue
+        [[ -e "$tmp/$rel" || -L "$tmp/$rel" ]] && continue   # case-insensitive fs
+        mkdir -p "$tmp/${rel:h}" && cp -pP "$VCDS_DIR/$rel" "$tmp/$rel" \
+            || { rm -rf "$tmp"; fail "Update stopped: could not carry over $rel. Your existing VCDS install is untouched."; }
+    done < <(cd "$VCDS_DIR" && find . \( -type f -o -type l \) -print0)
+    for f in "$VCDS_DIR"/(#i)*.(cfg|ini)(N.); do
+        cp -p "$f" "$tmp/" \
+            || { rm -rf "$tmp"; fail "Update stopped: could not carry over ${f:t}. Your existing VCDS install is untouched."; }
     done
-    # Atomic-ish swap: the old install is moved aside, not deleted, until the
-    # new one is in place -- a failure at any point leaves a usable state.
+    # Swap. VCDS.old only exists for the moment between the two moves; if
+    # the Mac dies right there, recover_interrupted_update puts it back.
     rm -rf "$VCDS_DIR.old"
-    mv "$VCDS_DIR" "$VCDS_DIR.old"
+    mv "$VCDS_DIR" "$VCDS_DIR.old" \
+        || { rm -rf "$tmp"; fail "Update failed -- your existing VCDS install is untouched."; }
     if mv "$tmp" "$VCDS_DIR"; then
-        rm -rf "$VCDS_DIR.old"
+        rm -rf "$VCDS_DIR.previous"
+        mv "$VCDS_DIR.old" "$VCDS_DIR.previous" || true
     else
         mv "$VCDS_DIR.old" "$VCDS_DIR"
         fail "Update failed -- your existing VCDS install is untouched."
     fi
     notify "VCDS updated."
+}
+
+# An update that died between its two moves leaves no VCDS dir and the real
+# install parked in VCDS.old. Put it back before anything decides this is a
+# first run (which would then have the next update delete it).
+recover_interrupted_update() {
+    if [[ ! -e "$VCDS_DIR" && -d "$VCDS_DIR.old" ]]; then
+        print -ru2 -- "recovering VCDS install from interrupted update"
+        mv "$VCDS_DIR.old" "$VCDS_DIR" || true
+    fi
 }
 
 first_run() {
@@ -211,11 +264,20 @@ first_run() {
     cat "$RES/build-id" 2>/dev/null >"$SUPPORT/installed-build" || true
 }
 
+# True when every regular file under $1 exists under $2 at the same relative
+# path with the same size -- the proof that a copy landed, whatever cp said.
+copy_verified() {
+    local src="$1" dst="$2" rel
+    while IFS= read -r -d '' rel; do
+        [[ -f "$dst/$rel" && "$(stat -f %z "$src/$rel")" == "$(stat -f %z "$dst/$rel")" ]] || return 1
+    done < <(cd "$src" && find . -type f -print0)
+}
+
 # VCDS output lands somewhere a Mac user can find it: Logs, Scans and Debug
 # live in ~/Documents/VCDS Logs and the prefix dirs are symlinks. Idempotent
 # and run every launch so existing installs pick up newly mapped dirs.
 map_output_dirs() {
-    local mac_root="$HOME/Documents/VCDS Logs" d
+    local mac_root="$HOME/Documents/VCDS Logs" d cperr
     [[ -d "$VCDS_DIR" ]] || return 0
     for d in Logs Scans Debug; do
         local target="$mac_root"
@@ -241,12 +303,18 @@ map_output_dirs() {
         # dirs in place (everything still works, files are only less visible).
         mkdir -p "$target" 2>/dev/null || { print -ru2 -- "map_output_dirs: no access to $target, skipping"; continue; }
         if [[ -d "$VCDS_DIR/$d" ]]; then
-            # Copy first, delete ONLY if the copy succeeded -- a partial copy
-            # (disk full, permission) must never cost the user their scans.
-            if cp -a "$VCDS_DIR/$d/." "$target/" 2>/dev/null; then
+            # Copy first, delete ONLY if every file verifiably arrived -- a
+            # partial copy (disk full, permission) must never cost the user
+            # their scans. The check is on the result, not cp's exit status:
+            # launched as the app, cp -a copies all the data yet exits non-
+            # zero (metadata it may not set in ~/Documents), which kept the
+            # dirs in the prefix forever (seen 2026-09, every launch).
+            cperr=$(cp -a "$VCDS_DIR/$d/." "$target/" 2>&1) \
+                || print -ru2 -- "map_output_dirs: cp of $d reported: ${cperr[1,500]}"
+            if copy_verified "$VCDS_DIR/$d" "$target"; then
                 rm -rf "$VCDS_DIR/$d"
             else
-                print -ru2 -- "map_output_dirs: copy of $d failed, keeping prefix dir"
+                print -ru2 -- "map_output_dirs: copy of $d incomplete, keeping prefix dir"
                 continue
             fi
         fi
@@ -278,6 +346,8 @@ fi
 # nothing worth that risk.
 end_session
 
+recover_interrupted_update
+
 # No install (or a BROKEN one) = first run; Option held = update/reinstall.
 # The exe alone is not proof of an install: a directory with VCDS-ARM.exe
 # but no Codes.dat boots to a zombie "VAG-COM" screen with everything
@@ -305,6 +375,31 @@ fi
 
 map_output_dirs
 
+# The x86 helpers (LCode, VCIConfig, VCDSScan) need Rosetta 2. Without it they
+# die silently -- the i386 process falls back to the ARM loader and aborts in
+# build_wow64_parameters -- so "Long Coding Helper does nothing" is the only
+# symptom. macOS 27 upgrades have been seen to remove Rosetta (2026-09-16), so
+# check every launch rather than once. VCDS itself runs fine without it.
+check_rosetta() {
+    [[ -n "${WINEHYBRIDX86:-}" && ! -f "$SUPPORT/no-rosetta-prompt" ]] || return 0
+    arch -x86_64 /usr/bin/true 2>/dev/null && return 0
+    print -ru2 -- "Rosetta 2 not available -- x86 helpers (LCode, VCIConfig, VCDSScan) will not start"
+    local ans
+    ans=$(osascript -e "display dialog \"Rosetta 2 is not installed.\n\nVCDS will run, but the Long Coding Helper and the interface Config screen need Rosetta and will not open without it. (macOS upgrades can remove it.)\" buttons {\"Don't Ask Again\", \"Not Now\", \"Install Rosetta…\"} default button 3 with title \"$APP_NAME\"" -e 'button returned of result' 2>/dev/null) || return 0
+    case "$ans" in
+        "Don't Ask Again") : >"$SUPPORT/no-rosetta-prompt" ;;
+        "Install Rosetta…")
+            notify "Installing Rosetta 2…"
+            if osascript -e 'do shell script "/usr/sbin/softwareupdate --install-rosetta --agree-to-license" with administrator privileges' >/dev/null 2>&1 \
+                && arch -x86_64 /usr/bin/true 2>/dev/null; then
+                notify "Rosetta 2 installed."
+            else
+                notify "Rosetta 2 could not be installed -- try again from the next launch."
+            fi ;;
+    esac
+}
+check_rosetta
+
 # Run VCDS. The chain from app to interface to car can glitch (interference,
 # dropped packets), and VCDS may hang or crash then -- it does on bare-metal
 # Windows too. Make recovery one click: an abnormal exit (crash, or the user
@@ -330,24 +425,50 @@ while :; do
     # x64 Windows and installs the x86-64 build into C:\Ross-Tech\VCDS-Beta
     # (verified 2026-08-27) -- no VCDS-ARM.exe, wrong directory. So we stop
     # it and unpack the archive natively, exactly like first run does.
-    updated=0
+    updated=0 handoff=""
     for i in {1..15}; do pgrep -qf 'vcupg\.exe' && break; sleep 0.2; done
-    if pgrep -qf 'vcupg\.exe' || [[ -f "$VCDS_DIR/vcupg.exe" && "$VCDS_DIR/vcupg.exe" -nt "$LOCKFILE" ]]; then
-        print -ru2 -- "VCDS updater hand-off detected -- unpacking vcupg.exe natively"
+    if pgrep -qf 'vcupg\.exe'; then
+        handoff=running        # the user said "install" inside VCDS
+    elif [[ -f "$VCDS_DIR/vcupg.exe" && "$VCDS_DIR/vcupg.exe" -nt "$LOCKFILE" ]]; then
+        handoff=file           # downloaded, but no installer running
+    fi
+    if [[ -n "$handoff" ]]; then
+        print -ru2 -- "VCDS updater hand-off detected ($handoff)"
         pkill -f 'vcupg\.exe' 2>/dev/null || true
         for i in {1..25}; do pgrep -qf 'vcupg\.exe' || break; sleep 0.2; done
-        notify "Installing the VCDS update…"
-        # Keep a copy outside the install dir: apply_update moves that aside.
-        cp -f "$VCDS_DIR/vcupg.exe" "$SUPPORT/vcupg-pending.exe"
-        rm -f "$VCDS_DIR/vcupg.exe"
         end_session
-        if apply_update "$SUPPORT/vcupg-pending.exe"; then
-            rm -f "$SUPPORT/vcupg-pending.exe"
-            # Whatever the stray installer managed to write before we stopped it.
-            stray_beta="$WINEPREFIX/drive_c/Ross-Tech/VCDS-Beta"
-            [[ -d "$stray_beta" && "$stray_beta" -nt "$LOCKFILE" ]] && rm -rf "$stray_beta"
-            map_output_dirs
-            updated=1
+        # A file with no running installer is ambiguous: the user may have
+        # declined the update, or the installer died at once (no Rosetta).
+        # Ask rather than install behind their back. Declining leaves the
+        # file where it is; being older than the next launch's lock, it
+        # won't prompt again.
+        install=1
+        if [[ "$handoff" == file ]]; then
+            ans=$(osascript -e "display dialog \"VCDS downloaded an update. Install it now?\n\nYour settings, logs and activation are kept.\" buttons {\"Not Now\", \"Install\"} default button 2 with title \"$APP_NAME\" giving up after 120" -e 'button returned of result' 2>/dev/null) || ans=""
+            [[ "$ans" == Install ]] || install=0
+        fi
+        # Only a complete download is worth unpacking; a truncated one (VCDS
+        # interrupted mid-download) used to end in a scary "is this the
+        # genuine VCDS download?" and a quit.
+        if (( install )) && ! installer_complete "$VCDS_DIR/vcupg.exe"; then
+            print -ru2 -- "vcupg.exe is incomplete or not a VCDS installer -- discarding"
+            notify "The downloaded VCDS update was incomplete -- check for updates in VCDS again."
+            rm -f "$VCDS_DIR/vcupg.exe"
+            install=0
+        fi
+        if (( install )); then
+            notify "Installing the VCDS update…"
+            # Keep a copy outside the install dir: apply_update moves that aside.
+            cp -f "$VCDS_DIR/vcupg.exe" "$SUPPORT/vcupg-pending.exe"
+            rm -f "$VCDS_DIR/vcupg.exe"
+            if apply_update "$SUPPORT/vcupg-pending.exe"; then
+                rm -f "$SUPPORT/vcupg-pending.exe"
+                # Whatever the stray installer managed to write before we stopped it.
+                stray_beta="$WINEPREFIX/drive_c/Ross-Tech/VCDS-Beta"
+                [[ -d "$stray_beta" && "$stray_beta" -nt "$LOCKFILE" ]] && rm -rf "$stray_beta"
+                map_output_dirs
+                updated=1
+            fi
         fi
     fi
 

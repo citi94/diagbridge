@@ -10,7 +10,7 @@ set -euo pipefail
 
 APP_NAME="${APP_NAME:-DiagBridge}"
 BUNDLE_ID="${BUNDLE_ID:-uk.harding.diagbridge}"
-VERSION="${VERSION:-0.2.2}"
+VERSION="${VERSION:-0.2.3}"
 IDENTITY="${IDENTITY:--}"                 # "-" = ad-hoc
 
 HERE="${0:A:h}"
@@ -167,7 +167,7 @@ cat > "$C/Info.plist" <<PLIST
     <key>CFBundleExecutable</key><string>$APP_NAME-setup</string>
     <key>CFBundleIconFile</key><string>AppIcon</string>
     <key>CFBundlePackageType</key><string>APPL</string>
-    <key>LSMinimumSystemVersion</key><string>26.0</string>
+    <key>LSMinimumSystemVersion</key><string>27.0</string>
     <key>LSArchitecturePriority</key><array><string>arm64</string></array>
     <key>NSHighResolutionCapable</key><true/>
     <key>NSHumanReadableCopyright</key><string>Wine is © the Wine project (LGPL). This app ships no Ross-Tech software.</string>

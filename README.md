@@ -21,7 +21,7 @@ notarized.
 
 ## Requirements
 
-- Apple Silicon Mac (M1 or later) running **macOS 26 or later**
+- Apple Silicon Mac (M1 or later) running **macOS 27 or later**
 - A genuine VCDS installer from Ross-Tech, **version 25.x or later**
   (the first release with ARM64 binaries)
 - A **current** Ross-Tech interface: **HEX-NET** (USB + WiFi, tested) or
@@ -30,6 +30,10 @@ notarized.
   kernel driver that cannot run under Wine.
 - Optional: Rosetta 2, only for the small Intel-only helper tools
   (Long Coding helper, interface config). VCDS itself runs fully native.
+  If the Long Coding Helper does nothing, Rosetta is missing — upgrading
+  to macOS 27 can remove it even if you installed it before. Reinstall with
+  `softwareupdate --install-rosetta --agree-to-license` (DiagBridge also
+  offers to do this at launch).
 
 ## First run
 
