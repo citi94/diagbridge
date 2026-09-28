@@ -230,6 +230,10 @@ apply_update() {
 # install parked in VCDS.old. Put it back before anything decides this is a
 # first run (which would then have the next update delete it).
 recover_interrupted_update() {
+    if [[ ! -e "$WINEPREFIX" && -d "$WINEPREFIX.old" ]]; then
+        print -ru2 -- "recovering prefix from interrupted repair"
+        mv "$WINEPREFIX.old" "$WINEPREFIX" || true
+    fi
     if [[ ! -e "$VCDS_DIR" && -d "$VCDS_DIR.old" ]]; then
         print -ru2 -- "recovering VCDS install from interrupted update"
         mv "$VCDS_DIR.old" "$VCDS_DIR" || true
@@ -346,35 +350,6 @@ fi
 # nothing worth that risk.
 end_session
 
-recover_interrupted_update
-
-# No install (or a BROKEN one) = first run; Option held = update/reinstall.
-# The exe alone is not proof of an install: a directory with VCDS-ARM.exe
-# but no Codes.dat boots to a zombie "VAG-COM" screen with everything
-# disabled (seen 2026-07-03 on an account with debris from old experiments).
-if [[ ! -f "$VCDS_DIR/VCDS-ARM.exe" || ! -f "$VCDS_DIR/Codes.dat" ]]; then
-    if [[ -f "$VCDS_DIR/VCDS-ARM.exe" ]]; then
-        osascript -e "display dialog \"The VCDS installation is incomplete and needs to be set up again from your Ross-Tech installer.\" buttons {\"Continue\"} default button 1 with title \"$APP_NAME\" giving up after 20" >/dev/null 2>&1 || true
-        rm -rf "$VCDS_DIR"
-    fi
-    first_run
-elif [[ "$OPTION_HELD" == "1" ]]; then
-    reinstall
-fi
-
-# App updated since this prefix last ran? Refresh the prefix's builtin-DLL
-# copies (wineboot -u rewrites everything carrying the "Wine builtin DLL"
-# signature and leaves the user's VCDS files alone).
-BUNDLE_BUILD="$(cat "$RES/build-id" 2>/dev/null || echo unknown)"
-if [[ "$(cat "$SUPPORT/installed-build" 2>/dev/null || true)" != "$BUNDLE_BUILD" ]]; then
-    notify "Updating the Windows environment…"
-    "$WINELOADER_BIN" wineboot -u || true
-    "$WINESERVER" -w 2>/dev/null || true
-    print -r -- "$BUNDLE_BUILD" >"$SUPPORT/installed-build"
-fi
-
-map_output_dirs
-
 # The x86 helpers (LCode, VCIConfig, VCDSScan) need Rosetta 2. Without it they
 # die silently -- the i386 process falls back to the ARM loader and aborts in
 # build_wow64_parameters -- so "Long Coding Helper does nothing" is the only
@@ -398,7 +373,87 @@ check_rosetta() {
             fi ;;
     esac
 }
+
+# A prefix first set up WITHOUT Rosetta never gets its 32-bit half: wineboot
+# builds syswow64 by running syswow64\rundll32.exe, an i386 program, which
+# can't start without Rosetta -- and can't start later either, because it is
+# the very file that pass creates. wineboot -u / --init on the existing
+# prefix don't recover (verified 2026-09-28), so installing Rosetta
+# afterwards left LCode/VCIConfig broken for good. Once Rosetta works,
+# rebuild: fresh prefix, VCDS cloned across (APFS clone: instant, no extra
+# space), verified, then swapped in. VCDS keeps its settings in its own
+# folder; the registry holds nothing of the user's beyond VCIConfig's UI
+# language.
+repair_wow64_prefix() {
+    [[ -n "${WINEHYBRIDX86:-}" && -f "$VCDS_DIR/VCDS-ARM.exe" ]] || return 0
+    [[ -f "$WINEPREFIX/drive_c/windows/syswow64/rundll32.exe" ]] && return 0
+    arch -x86_64 /usr/bin/true 2>/dev/null || return 0
+    local new="$WINEPREFIX-new"
+    print -ru2 -- "prefix has no 32-bit half (set up without Rosetta) -- rebuilding"
+    notify "Repairing the Windows environment for Long Coding and Config (one-time)…"
+    rm -rf "$new"
+    WINEPREFIX="$new" "$WINELOADER_BIN" wineboot --init 2>/dev/null || true
+    WINEPREFIX="$new" "$WINELOADER_BIN" regedit /S "$RES/seed/prefix.reg" 2>/dev/null || true
+    WINEPREFIX="$new" "$WINESERVER" -w 2>/dev/null || true
+    if [[ ! -f "$new/drive_c/windows/syswow64/rundll32.exe" ]]; then
+        print -ru2 -- "repair: new prefix has no 32-bit half either -- keeping the old one"
+        rm -rf "$new"; return 0
+    fi
+    rm -rf "$new/drive_c/Ross-Tech"
+    if ! { cp -cRp "$WINEPREFIX/drive_c/Ross-Tech" "$new/drive_c/Ross-Tech" 2>/dev/null \
+           || cp -Rp "$WINEPREFIX/drive_c/Ross-Tech" "$new/drive_c/Ross-Tech"; } \
+       || [[ ! -f "$new/drive_c/Ross-Tech/VCDS/VCDS-ARM.exe" ]] \
+       || ! copy_verified "$WINEPREFIX/drive_c/Ross-Tech" "$new/drive_c/Ross-Tech"; then
+        print -ru2 -- "repair: could not carry VCDS across -- keeping the old prefix"
+        rm -rf "$new"; return 0
+    fi
+    # Same two-step swap as apply_update; recover_interrupted_update undoes
+    # a half-done one.
+    rm -rf "$WINEPREFIX.old"
+    mv "$WINEPREFIX" "$WINEPREFIX.old" || { rm -rf "$new"; return 0; }
+    if mv "$new" "$WINEPREFIX"; then
+        rm -rf "$WINEPREFIX.old"
+        cat "$RES/build-id" 2>/dev/null >"$SUPPORT/installed-build" || true
+        notify "Repair complete."
+    else
+        mv "$WINEPREFIX.old" "$WINEPREFIX"
+    fi
+}
+
+recover_interrupted_update
+
+# Before first run too: a prefix set up without Rosetta needs the rebuild
+# below, so offer Rosetta before the one-time setup, not after it.
 check_rosetta
+
+# No install (or a BROKEN one) = first run; Option held = update/reinstall.
+# The exe alone is not proof of an install: a directory with VCDS-ARM.exe
+# but no Codes.dat boots to a zombie "VAG-COM" screen with everything
+# disabled (seen 2026-07-03 on an account with debris from old experiments).
+if [[ ! -f "$VCDS_DIR/VCDS-ARM.exe" || ! -f "$VCDS_DIR/Codes.dat" ]]; then
+    if [[ -f "$VCDS_DIR/VCDS-ARM.exe" ]]; then
+        osascript -e "display dialog \"The VCDS installation is incomplete and needs to be set up again from your Ross-Tech installer.\" buttons {\"Continue\"} default button 1 with title \"$APP_NAME\" giving up after 20" >/dev/null 2>&1 || true
+        rm -rf "$VCDS_DIR"
+    fi
+    first_run
+elif [[ "$OPTION_HELD" == "1" ]]; then
+    reinstall
+fi
+
+repair_wow64_prefix
+
+# App updated since this prefix last ran? Refresh the prefix's builtin-DLL
+# copies (wineboot -u rewrites everything carrying the "Wine builtin DLL"
+# signature and leaves the user's VCDS files alone).
+BUNDLE_BUILD="$(cat "$RES/build-id" 2>/dev/null || echo unknown)"
+if [[ "$(cat "$SUPPORT/installed-build" 2>/dev/null || true)" != "$BUNDLE_BUILD" ]]; then
+    notify "Updating the Windows environment…"
+    "$WINELOADER_BIN" wineboot -u || true
+    "$WINESERVER" -w 2>/dev/null || true
+    print -r -- "$BUNDLE_BUILD" >"$SUPPORT/installed-build"
+fi
+
+map_output_dirs
 
 # Run VCDS. The chain from app to interface to car can glitch (interference,
 # dropped packets), and VCDS may hang or crash then -- it does on bare-metal

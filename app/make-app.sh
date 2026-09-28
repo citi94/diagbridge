@@ -10,7 +10,7 @@ set -euo pipefail
 
 APP_NAME="${APP_NAME:-DiagBridge}"
 BUNDLE_ID="${BUNDLE_ID:-uk.harding.diagbridge}"
-VERSION="${VERSION:-0.2.3}"
+VERSION="${VERSION:-0.2.4}"
 IDENTITY="${IDENTITY:--}"                 # "-" = ad-hoc
 
 HERE="${0:A:h}"
