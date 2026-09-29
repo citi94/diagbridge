@@ -10,7 +10,7 @@ set -euo pipefail
 
 APP_NAME="${APP_NAME:-DiagBridge}"
 BUNDLE_ID="${BUNDLE_ID:-uk.harding.diagbridge}"
-VERSION="${VERSION:-0.2.4}"
+VERSION="${VERSION:-0.2.5}"
 IDENTITY="${IDENTITY:--}"                 # "-" = ad-hoc
 
 HERE="${0:A:h}"
@@ -125,6 +125,73 @@ print(f'bundled {len(mapping)} dylibs')
 EOF
 fi
 
+echo "==> Self-containing the dylib closure (no links outside the bundle)"
+# The prepared closure's x86_64 halves were linked against the build
+# machine's x86-libs tree by ABSOLUTE path (libz, libbz2, brotli, iconv,
+# ffi, zstd, ...). On the build machine those resolve, so everything looked
+# fine; on every other Mac the Rosetta-side FreeType failed to load and the
+# x86 helpers (VCIConfig, LCode) drew no text at all (issue #2, 2026-09-29).
+# Vendor every such dependency into libs/x86_64/ and point at it relatively;
+# likewise repoint wine .so files at the bundled copy of anything they link
+# by absolute homebrew path (wineusb -> libusb).
+python3 - "$C" <<'EOF'
+import os, shutil, subprocess, sys
+C = sys.argv[1]
+libs = os.path.join(C, 'Resources', 'libs')
+x86dir = os.path.join(libs, 'x86_64')
+
+def system(p): return p.startswith(('/usr/lib/', '/System/'))
+def run(*a): return subprocess.run(a, capture_output=True, text=True).stdout
+def archs(f): return run('lipo', '-archs', f).split()
+def install_id(f, a): return (run('otool', '-arch', a, '-D', f).splitlines()[1:] or [''])[0].strip()
+def deps(f, a):
+    own = install_id(f, a)
+    out = []
+    for line in run('otool', '-arch', a, '-L', f).splitlines()[1:]:
+        d = line.strip().split(' (')[0]
+        if d and d != own: out.append(d)
+    return out
+def change(f, old, new):
+    subprocess.run(['install_name_tool', '-change', old, new, f], check=True, capture_output=True)
+
+vendored = {}   # realpath of source -> leaf name inside libs/x86_64
+def vendor(src):
+    real = os.path.realpath(src)
+    if real in vendored: return vendored[real]
+    if not os.path.exists(real): sys.exit(f'missing x86_64 dependency: {src}')
+    leaf = os.path.basename(src)
+    os.makedirs(x86dir, exist_ok=True)
+    dst = os.path.join(x86dir, leaf)
+    shutil.copy2(real, dst); os.chmod(dst, 0o755)
+    vendored[real] = leaf
+    subprocess.run(['install_name_tool', '-id', f'@loader_path/{leaf}', dst], check=True, capture_output=True)
+    for d in deps(dst, 'x86_64'):
+        if d.startswith('/') and not system(d):
+            change(dst, d, f'@loader_path/{vendor(d)}')
+    return leaf
+
+for name in sorted(os.listdir(libs)):
+    f = os.path.join(libs, name)
+    if not name.endswith('.dylib') or not os.path.isfile(f): continue
+    if 'x86_64' in archs(f):
+        for d in deps(f, 'x86_64'):
+            if d.startswith('/') and not system(d):
+                change(f, d, f'@loader_path/x86_64/{vendor(d)}')
+
+bundled = {n for n in os.listdir(libs) if n.endswith('.dylib')}
+wine = os.path.join(C, 'Resources', 'wine')
+for root, _, files in os.walk(wine):
+    for n in files:
+        f = os.path.join(root, n)
+        if not n.endswith('.so') or 'Mach-O' not in run('file', '-b', f): continue
+        for a in archs(f):
+            for d in deps(f, a):
+                if d.startswith('/') and not system(d) and os.path.basename(d) in bundled:
+                    rel = os.path.relpath(os.path.join(libs, os.path.basename(d)), root)
+                    change(f, d, f'@loader_path/{rel}')
+print(f'    vendored {len(vendored)} x86_64 dylibs into libs/x86_64')
+EOF
+
 echo "==> Build id (launcher refreshes the prefix DLL copies when it changes)"
 BUILD_ID="$VERSION+$(git -C "$ARM_PORT/wine-src" rev-parse --short HEAD 2>/dev/null || echo nogit).$(date +%Y%m%d%H%M)"
 print -r -- "$BUILD_ID" > "$C/Resources/build-id"
@@ -174,6 +241,30 @@ cat > "$C/Info.plist" <<PLIST
 </dict>
 </plist>
 PLIST
+
+echo "==> Guard: every Mach-O links only inside the bundle or to the OS"
+# A link into the build machine's filesystem works on the build machine
+# and nowhere else -- exactly how the x86 FreeType break shipped unnoticed.
+python3 - "$C" <<'EOF'
+import os, subprocess, sys
+C = sys.argv[1]
+def run(*a): return subprocess.run(a, capture_output=True, text=True).stdout
+bad = []
+for root, _, files in os.walk(C):
+    for n in files:
+        f = os.path.join(root, n)
+        if os.path.islink(f) or 'Mach-O' not in run('file', '-b', f): continue
+        for a in run('lipo', '-archs', f).split():
+            own = (run('otool', '-arch', a, '-D', f).splitlines()[1:] or [''])[0].strip()
+            for line in run('otool', '-arch', a, '-L', f).splitlines()[1:]:
+                d = line.strip().split(' (')[0]
+                if d and d != own and d.startswith('/') and not d.startswith(('/usr/lib/', '/System/')):
+                    bad.append(f'{os.path.relpath(f, C)} [{a}] -> {d}')
+if bad:
+    print('    ERROR: links outside the bundle:\n      ' + '\n      '.join(bad))
+    sys.exit(1)
+print('    ok')
+EOF
 
 echo "==> Signing (identity: $IDENTITY)"
 # Inside-out: every Mach-O first, bundle last. PE files (.dll/.sys/.exe) are
